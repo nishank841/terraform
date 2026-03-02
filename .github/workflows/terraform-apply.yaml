@@ -2,6 +2,8 @@ name: Terraform Apply Per App
 
 on:
   push:
+    branches:
+      - main
     paths:
       - 'apps/*.tfvars'
 
