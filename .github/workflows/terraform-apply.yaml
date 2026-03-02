@@ -8,7 +8,7 @@ on:
       - 'apps/*.tfvars'
 
 env:
-  TF_DESTROY: false  # default, can be overridden via workflow dispatch or repo secrets
+  TF_DESTROY: true  # default, can be overridden via workflow dispatch or repo secrets
 
 jobs:
   terraform:
