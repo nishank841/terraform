@@ -6,12 +6,6 @@ on:
       - main
     paths:
       - 'apps/*.tfvars'
-  pull_request:
-    types: [closed]
-    branches:
-      - main
-    paths:
-      - 'apps/*.tfvars'
 
 env:
   TF_DESTROY: false
