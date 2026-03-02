@@ -13,7 +13,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0  # important for git diff
+          fetch-depth: 0  # required for git diff
 
       # 2️⃣ Configure AWS credentials from repo secrets
       - name: Configure AWS Credentials
@@ -23,35 +23,43 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: us-east-1
 
-      # 3️⃣ Detect changed or new tfvars files
+      # 3️⃣ Setup Terraform
+      - uses: hashicorp/setup-terraform@v3
+
+      # 4️⃣ Detect changed or new tfvars files
       - name: Detect changed tfvars
         id: changed
         run: |
-          # Handle first commit / new branch
+          FILES=""
           if [ "${{ github.event.before }}" = "0000000000000000000000000000000000000000" ]; then
+            # First commit or new branch: pick all tfvars
             FILES=$(ls apps/*.tfvars 2>/dev/null || true)
           else
+            # Pick only changed tfvars files
             FILES=$(git diff --name-only ${{ github.event.before }} ${{ github.sha }} | grep '^apps/.*\.tfvars$' || true)
           fi
+
+          # Trim whitespace and join as space-separated
+          FILES=$(echo $FILES | xargs)
           echo "files=$FILES" >> $GITHUB_OUTPUT
 
-      # 4️⃣ Fail early if no files changed
+      # 5️⃣ Fail early if no files changed
       - name: Check for changed apps
         if: ${{ steps.changed.outputs.files == '' }}
-        run: echo "No apps changed, skipping Terraform." && exit 0
+        run: |
+          echo "No apps changed, skipping Terraform."
+          exit 0
 
-      # 5️⃣ Setup Terraform
-      - uses: hashicorp/setup-terraform@v3
-
-      # 6️⃣ Loop over each changed file
+      # 6️⃣ Loop over each changed tfvars file
       - name: Apply Terraform per app
         run: |
           for FILE in ${{ steps.changed.outputs.files }}; do
+            if [ ! -f "$FILE" ]; then
+              echo "File $FILE does not exist, skipping."
+              continue
+            fi
             echo "Processing $FILE"
 
-            # Initialize Terraform
             terraform init
-
-            # Apply Terraform for this app
             terraform apply -auto-approve -var-file="$FILE"
           done
