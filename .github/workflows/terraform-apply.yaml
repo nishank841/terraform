@@ -7,6 +7,9 @@ on:
     paths:
       - 'apps/*.tfvars'
 
+env:
+  TF_DESTROY: false  # default, can be overridden via workflow dispatch or repo secrets
+
 jobs:
   terraform:
     runs-on: ubuntu-latest
@@ -15,7 +18,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0  # required for git diff
+          fetch-depth: 0
 
       # 2️⃣ Configure AWS credentials from repo secrets
       - name: Configure AWS Credentials
@@ -34,14 +37,10 @@ jobs:
         run: |
           FILES=""
           if [ "${{ github.event.before }}" = "0000000000000000000000000000000000000000" ]; then
-            # First commit or new branch: pick all tfvars
             FILES=$(ls apps/*.tfvars 2>/dev/null || true)
           else
-            # Pick only changed tfvars files
             FILES=$(git diff --name-only ${{ github.event.before }} ${{ github.sha }} | grep '^apps/.*\.tfvars$' || true)
           fi
-
-          # Trim whitespace and join as space-separated
           FILES=$(echo $FILES | xargs)
           echo "files=$FILES" >> $GITHUB_OUTPUT
 
@@ -52,8 +51,8 @@ jobs:
           echo "No apps changed, skipping Terraform."
           exit 0
 
-      # 6️⃣ Loop over each changed tfvars file
-      - name: Apply Terraform per app
+      # 6️⃣ Apply or Destroy per app based on TF_DESTROY
+      - name: Apply or Destroy Terraform per app
         run: |
           for FILE in ${{ steps.changed.outputs.files }}; do
             if [ ! -f "$FILE" ]; then
@@ -63,5 +62,12 @@ jobs:
             echo "Processing $FILE"
 
             terraform init
-            terraform apply -auto-approve -var-file="$FILE"
+
+            if [ "${TF_DESTROY}" = "true" ]; then
+              echo "Destroying resources for $FILE..."
+              terraform destroy -auto-approve -var-file="$FILE"
+            else
+              echo "Applying resources for $FILE..."
+              terraform apply -auto-approve -var-file="$FILE"
+            fi
           done
