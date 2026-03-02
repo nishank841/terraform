@@ -4,24 +4,32 @@ on:
   push:
     branches:
       - main
+    paths:
+      - 'apps/*.tfvars'
+  pull_request:
+    types: [closed]
+    branches:
+      - main
+    paths:
+      - 'apps/*.tfvars'
 
 env:
-  TF_DESTROY: false   # set to true to destroy resources
+  TF_DESTROY: false
 
 jobs:
   terraform:
+    # Trigger on push OR if the PR was specifically merged
+    if: github.event_name == 'push' || (github.event_name == 'pull_request' && github.event.pull_request.merged == true)
     runs-on: ubuntu-latest
     permissions:
       contents: write
 
     steps:
-      # 1️⃣ Checkout repo
       - name: Checkout
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      # 2️⃣ Configure AWS credentials
       - name: Configure AWS Credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
@@ -29,64 +37,41 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: us-east-1
 
-      # 3️⃣ Setup Terraform
       - uses: hashicorp/setup-terraform@v3
 
-      # 4️⃣ Detect changed or new tfvars files
       - name: Detect changed tfvars
         id: changed
         run: |
-          FILES=""
-          # Detect if commit is a merge commit
-          PARENT=$(git rev-list --parents -n 1 ${{ github.sha }} | awk '{print $2}')
-          if [ -z "$PARENT" ]; then
-            # first commit or new branch, pick all tfvars
-            FILES=$(ls apps/*.tfvars 2>/dev/null || true)
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            # Compare the PR merge commit against its base
+            FILES=$(git diff --name-only ${{ github.event.pull_request.base.sha }} ${{ github.sha }} | grep '^apps/.*\.tfvars$' || true)
           else
-            # compare parent commit to current commit (works for merges and pushes)
-            FILES=$(git diff --name-only $PARENT ${{ github.sha }} | grep '^apps/.*\.tfvars$' || true)
+            # Compare current push against the previous commit
+            FILES=$(git diff --name-only ${{ github.event.before }} ${{ github.sha }} | grep '^apps/.*\.tfvars$' || true)
           fi
+          
+          # Fallback: if FILES is empty (e.g. first push), check the directory
+          if [ -z "$FILES" ]; then FILES=$(ls apps/*.tfvars 2>/dev/null || true); fi
 
           FILES=$(echo $FILES | xargs)
           echo "files=$FILES" >> $GITHUB_OUTPUT
-          echo "Changed TFVARS files: $FILES"
+          echo "Changed files: $FILES"
 
-      # 5️⃣ Exit if no changes
-      - name: Check for changed apps
-        if: ${{ steps.changed.outputs.files == '' }}
-        run: |
-          echo "No apps changed. Skipping Terraform."
-          exit 0
-
-      # 6️⃣ Apply or Destroy per app with per-app state
-      - name: Apply or Destroy Terraform per app
+      - name: Apply Terraform per app
+        if: steps.changed.outputs.files != ''
         run: |
           mkdir -p statefiles
           for FILE in ${{ steps.changed.outputs.files }}; do
-            if [ ! -f "$FILE" ]; then
-              echo "File $FILE not found, skipping."
-              continue
-            fi
-
-            echo "Processing $FILE"
-
-            PROJECT=$(grep 'project_name' $FILE | awk -F '"' '{print $2}')
+            [ ! -f "$FILE" ] && continue
+            
+            PROJECT=$(grep 'project_name' "$FILE" | awk -F '"' '{print $2}')
             STATE_FILE="statefiles/${PROJECT}.tfstate"
 
-            echo "Using state file: $STATE_FILE"
-
             terraform init -backend=false
-
+            
             if [ "${TF_DESTROY}" = "true" ]; then
-              echo "Destroying resources for $PROJECT..."
-              terraform destroy -auto-approve \
-                -var-file="$FILE" \
-                -state="$STATE_FILE"
-              rm -f "$STATE_FILE"
+              terraform destroy -auto-approve -var-file="$FILE" -state="$STATE_FILE"
             else
-              echo "Applying resources for $PROJECT..."
-              terraform apply -auto-approve \
-                -var-file="$FILE" \
-                -state="$STATE_FILE"
+              terraform apply -auto-approve -var-file="$FILE" -state="$STATE_FILE"
             fi
           done
