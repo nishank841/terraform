@@ -1,0 +1,41 @@
+name: Auto Merge PRs
+
+on:
+  pull_request:
+    types: [opened, labeled, synchronize]
+
+permissions:
+  pull-requests: write
+  contents: write
+
+jobs:
+  automerge:
+    if: contains(github.event.pull_request.labels.*.name, 'automerge')
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/github-script@v7
+        with:
+          script: |
+            const { owner, repo } = context.repo;
+            const pull_number = context.payload.pull_request.number;
+      
+            // Re-fetch PR to get latest mergeable state
+            const { data: pr } = await github.rest.pulls.get({
+              owner,
+              repo,
+              pull_number
+            });
+      
+            console.log("Mergeable state:", pr.mergeable_state);
+      
+            if (pr.mergeable_state !== "clean") {
+              core.setFailed(`PR not ready. Current state: ${pr.mergeable_state}`);
+            }
+      
+            await github.rest.pulls.merge({
+              owner,
+              repo,
+              pull_number,
+              merge_method: "squash"
+            });
