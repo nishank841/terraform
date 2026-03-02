@@ -1,1 +1,1 @@
-project_name = "chikks"
+project_name = "chikk"
