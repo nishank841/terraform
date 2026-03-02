@@ -4,20 +4,18 @@ on:
   push:
     branches:
       - main
-    paths:
-      - 'apps/*.tfvars'
 
 env:
-  TF_DESTROY: false   # change to false to apply
+  TF_DESTROY: false   # set to true to destroy resources
 
 jobs:
   terraform:
     runs-on: ubuntu-latest
     permissions:
-      contents: write   # required to push statefiles back
+      contents: write
 
     steps:
-      # 1️⃣ Checkout repository
+      # 1️⃣ Checkout repo
       - name: Checkout
         uses: actions/checkout@v4
         with:
@@ -34,24 +32,32 @@ jobs:
       # 3️⃣ Setup Terraform
       - uses: hashicorp/setup-terraform@v3
 
-      # 4️⃣ Detect changed tfvars files
+      # 4️⃣ Detect changed or new tfvars files
       - name: Detect changed tfvars
         id: changed
         run: |
           FILES=""
-          if [ "${{ github.event.before }}" = "0000000000000000000000000000000000000000" ]; then
+          # Detect if commit is a merge commit
+          PARENT=$(git rev-list --parents -n 1 ${{ github.sha }} | awk '{print $2}')
+          if [ -z "$PARENT" ]; then
+            # first commit or new branch, pick all tfvars
             FILES=$(ls apps/*.tfvars 2>/dev/null || true)
           else
-            FILES=$(git diff --name-only ${{ github.event.before }} ${{ github.sha }} | grep '^apps/.*\.tfvars$' || true)
+            # compare parent commit to current commit (works for merges and pushes)
+            FILES=$(git diff --name-only $PARENT ${{ github.sha }} | grep '^apps/.*\.tfvars$' || true)
           fi
+
           FILES=$(echo $FILES | xargs)
           echo "files=$FILES" >> $GITHUB_OUTPUT
+          echo "Changed TFVARS files: $FILES"
+
       # 5️⃣ Exit if no changes
       - name: Check for changed apps
         if: ${{ steps.changed.outputs.files == '' }}
         run: |
           echo "No apps changed. Skipping Terraform."
           exit 0
+
       # 6️⃣ Apply or Destroy per app with per-app state
       - name: Apply or Destroy Terraform per app
         run: |
@@ -61,18 +67,21 @@ jobs:
               echo "File $FILE not found, skipping."
               continue
             fi
+
             echo "Processing $FILE"
-            # Extract project_name from tfvars
+
             PROJECT=$(grep 'project_name' $FILE | awk -F '"' '{print $2}')
             STATE_FILE="statefiles/${PROJECT}.tfstate"
+
             echo "Using state file: $STATE_FILE"
+
             terraform init -backend=false
+
             if [ "${TF_DESTROY}" = "true" ]; then
               echo "Destroying resources for $PROJECT..."
               terraform destroy -auto-approve \
                 -var-file="$FILE" \
                 -state="$STATE_FILE"
-              # Optional: remove state file after destroy
               rm -f "$STATE_FILE"
             else
               echo "Applying resources for $PROJECT..."
@@ -81,15 +90,3 @@ jobs:
                 -state="$STATE_FILE"
             fi
           done
-      # 7️⃣ Commit updated state files
-      - name: Commit state files
-        run: |
-          git config user.name "github-actions"
-          git config user.email "github-actions@github.com"
-          git add statefiles/*.tfstate || true
-          if git diff --cached --quiet; then
-            echo "No state changes to commit."
-          else
-            git commit -m "Update Terraform state files"
-            git push
-          fi
