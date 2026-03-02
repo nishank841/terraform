@@ -1,1 +1,1 @@
-app_name = ipm
+project_name = ipm
