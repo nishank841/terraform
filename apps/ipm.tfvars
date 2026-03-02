@@ -1,1 +1,1 @@
-project_name = ipm
+project_name = "ipm"
