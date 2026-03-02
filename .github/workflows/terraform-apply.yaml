@@ -8,10 +8,14 @@ on:
 jobs:
   terraform:
     runs-on: ubuntu-latest
-
     steps:
-      - uses: actions/checkout@v4
+      # 1️⃣ Checkout repo with full history
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # important for git diff
 
+      # 2️⃣ Configure AWS credentials from repo secrets
       - name: Configure AWS Credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
@@ -19,16 +23,38 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: us-east-1
 
-      - uses: hashicorp/setup-terraform@v3
-
+      # 3️⃣ Detect changed or new tfvars files
       - name: Detect changed tfvars
         id: changed
         run: |
-          FILE=$(git diff --name-only ${{ github.event.before }} ${{ github.sha }} | grep '^apps/.*\.tfvars$')
-          echo "file=$FILE" >> $GITHUB_OUTPUT
+          # Handle first commit / new branch
+          if [ "${{ github.event.before }}" = "0000000000000000000000000000000000000000" ]; then
+            FILES=$(ls apps/*.tfvars 2>/dev/null || true)
+          else
+            FILES=$(git diff --name-only ${{ github.event.before }} ${{ github.sha }} | grep '^apps/.*\.tfvars$' || true)
+          fi
+          echo "files=$FILES" >> $GITHUB_OUTPUT
 
-      - name: Terraform Init
-        run: terraform init
+      # 4️⃣ Fail early if no files changed
+      - name: Check for changed apps
+        if: ${{ steps.changed.outputs.files == '' }}
+        run: echo "No apps changed, skipping Terraform." && exit 0
 
-      - name: Terraform Apply
-        run: terraform apply -auto-approve -var-file="${{ steps.changed.outputs.file }}"
+      # 5️⃣ Setup Terraform
+      - uses: hashicorp/setup-terraform@v3
+
+      # 6️⃣ Loop over each changed file
+      - name: Apply Terraform per app
+        run: |
+          for FILE in ${{ steps.changed.outputs.files }}; do
+            echo "Processing $FILE"
+            # Extract project_name from tfvars
+            PROJECT_NAME=$(grep 'project_name' "$FILE" | cut -d '=' -f2 | tr -d ' "')
+            echo "Project: $PROJECT_NAME"
+
+            # Initialize Terraform
+            terraform init
+
+            # Apply Terraform for this app
+            terraform apply -auto-approve -var-file="$FILE"
+          done
