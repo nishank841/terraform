@@ -6,7 +6,7 @@ resource "aws_db_instance" "this" {
   engine_version    = "15"
   instance_class    = "db.t3.micro"
 
-  username = "admin"
+  username = "myuser"
 
   # 🔥 THIS enables AWS-managed password + Secrets Manager
   manage_master_user_password = true
