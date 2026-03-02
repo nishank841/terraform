@@ -48,9 +48,6 @@ jobs:
         run: |
           for FILE in ${{ steps.changed.outputs.files }}; do
             echo "Processing $FILE"
-            # Extract project_name from tfvars
-            PROJECT_NAME=$(grep 'project_name' "$FILE" | cut -d '=' -f2 | tr -d ' "')
-            echo "Project: $PROJECT_NAME"
 
             # Initialize Terraform
             terraform init
