@@ -1,1 +1,1 @@
-app_name = ipm
+app_name = ipms
